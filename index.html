@@ -3,22 +3,40 @@
     <head>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.1/dist/css/bootstrap.min.css" integrity="sha384-F3w7mX95PdgyTmZZMECAngseQB83DfGTowi0iMjiWaeVhAn4FJkqJByhZMI3AhiU" crossorigin="anonymous">
         <title>ScrumVote Lite</title>
+        <style>
+            .inline {
+                width: auto;
+                display: inline-block;
+            }
+        </style>
         <script>
             'use strict';
             const dbApiKey = '6140e5d043cedb6d1f97f126';
-            const userDataDbUrl = 'https://svldb-3267.restdb.io/rest/userdata';
+            const voteDbUrl = 'https://svldb-3267.restdb.io/rest/userdata';
             const roomDbUrl = 'https://svldb-3267.restdb.io/rest/rooms';
-            let roomId = (new URL(document.location)).searchParams.get('room');
+            const roomId = (new URL(document.location)).searchParams.get('room');
+            Object.defineProperty(window, 'voteId', { get: () => roomId + userData.id }); // Creating a global getter
 
             let userData;
             window.onload = () => {
                 userData = JSON.parse(localStorage.getItem('userData') ?? 'null') ?? {
                     name: 'Anonymous',
-                    id: Date.now().toString(36) + Math.random().toString(36).substring(2),
-                    vote: ''
+                    id: Date.now().toString(36) + Math.random().toString(36).substring(2)
                 };
                 document.getElementById('userNameText').placeholder = userData.name;
             };
+
+            function show(id) {
+                const el = document.getElementById(id);
+                el.classList.remove('d-none');
+                el.classList.add('d-inline');
+            }
+
+            function hide(id) {
+                const el = document.getElementById(id);
+                el.classList.remove('d-inline');
+                el.classList.add('d-none');
+            }
 
             async function dbRequest(dbUrl, method, body) {
                 return await fetch(dbUrl, { 
@@ -36,36 +54,55 @@
                 });
             }
 
+            async function pushToDb(dbUrl, body) {
+                try { // If already exists
+                    await dbRequest(dbUrl, 'PUT', body);
+                } catch { // If does not exist
+                    await dbRequest(dbUrl, 'POST', body);
+                }
+            }
+
             async function onNameInput(userName) {
                 userData.name = userName || userData.name;
                 localStorage.setItem('userData', JSON.stringify(userData));
-                const userNameForm = document.getElementById('userNameForm');
-                userNameForm.classList.remove('d-inline');
-                userNameForm.classList.add('d-none');
+                hide('userNameForm');
                 if (roomId) { // Vote mode
-                    const room = await dbRequest(roomDbUrl + `?q={"id":"${roomId}"}`, 'GET');
+                    const roomRequest = await dbRequest(roomDbUrl + `?q={"id":"${roomId}"}`, 'GET');
+                    const rooms = await roomRequest.json();
+                    document.getElementById('questionToShow').innerText = rooms[0].question;
+                    const voteRequest = await dbRequest(voteDbUrl + `?q={"roomId":"${roomId}"}`, 'GET');
+                    const votes = await voteRequest.json();
                     const voteForm = document.getElementById('voteForm');
-                    voteForm.classList.remove('d-none');
-                    voteForm.classList.add('d-inline');
-                    voteForm.innerText = JSON.stringify(room);
+                    const voteTemplate = document.getElementById('voteTemplate');
+                    for (const vote of votes) {
+                        if (vote.voteId == voteId) {
+                            document.getElementById('currentUserVote').value = vote.vote;
+                            continue;
+                        }
+                        const entry = voteTemplate.cloneNode(true);
+                        entry.getElementsByTagName('label')[0].innerText = vote.userName;
+                        entry.getElementsByTagName('input')[0].value = vote.vote;
+                        voteForm.appendChild(entry);
+                    }
+                    hide('voteTemplate');
+                    show('voteForm');
+
                 } else { // Room creation mode
-                    const createRoomForm = document.getElementById('createRoomForm');
-                    createRoomForm.classList.remove('d-none');
-                    createRoomForm.classList.add('d-inline');
+                    show('createRoomForm');
                 }
             }
 
             async function onQuestionInput(question) {
-                const createRoomForm = document.getElementById('createRoomForm');
-                createRoomForm.classList.remove('d-inline');
-                createRoomForm.classList.add('d-none');
-                console.log(userData.id);
-                try {
-                    await dbRequest(roomDbUrl, 'PUT', { id: userData.id, question: question });
-                } catch {
-                    await dbRequest(roomDbUrl, 'POST', { id: userData.id, question: question });
-                }
-                window.location.href = window.location.pathname + `?room=${userData.id}`;
+                hide('createRoomForm');
+                await pushToDb(roomDbUrl, { id: userData.id, question: question });
+                window.location.href = window.location.pathname + `?room=${userData.id}`; // Navigate back to home page but with a roomId
+            }
+
+            async function onSubmitVote(vote) {
+                await pushToDb(voteDbUrl, { roomId: roomId, voteId: voteId, userName: userData.name, vote: vote });
+                const voteRequest = await dbRequest(voteDbUrl + `?q={"voteId":"${voteId}"}`, 'GET');
+                const votes = await voteRequest.json();
+                document.getElementById('currentUserVote').value = votes[0].vote;
             }
         </script>
     </head>
@@ -86,8 +123,17 @@
             </div>
             <button class="btn btn-primary" onclick="onQuestionInput(this.form.elements['question'].value)">Create</button>
         </form>
-        <form id="voteForm" class="d-none">
-            lfsz
+        <form id="voteForm" class="d-none" onsubmit="return false">
+            <h1 id="questionToShow" class="display-4"></h1>
+            <div class="form-group">
+                <label for="currentUserVote">Your vote:</label>
+                <input id="currentUserVote" type="text" class="form-control inline" name="vote" placeholder="42" required>
+                <button class="btn btn-primary" onclick="onSubmitVote(this.form.elements['vote'].value)">Submit vote</button>
+            </div>
+            <div id="voteTemplate" class="form-group">
+                <label></label>
+                <input type="text" class="form-control inline" readonly>
+            </div>
         </form>
     </div>
 </body>
